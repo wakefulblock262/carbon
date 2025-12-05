@@ -1,0 +1,11 @@
+id = "carbon"
+name = "Carbon"
+version = "0.0.1"
+schema_version = 1
+authors = ["wakefulblock262 <everett.kamulda@outlook.com>"]
+description = "Seamless Script Synchronization between Roblox Studio and Zed based on Silicon."
+repository = "https://github.com/wakefulblock262/carbon"
+
+[language_servers.carbon]
+name = "Carbon"
+languages = ["Lua", "Luau"]
