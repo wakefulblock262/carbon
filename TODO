@@ -1,2 +1,6 @@
-1 - Add support of sourcemaps for luau-lsp using Rojo
+1 - Add support of sourcemaps for luau-lsp on Zed - done
 2 - make my own Roblox Studio plugin?
+3 - Add roblox-ts support
+4 - port to rust for more roblox tool support?
+5 - add vscode extension?
+6 - add support for other languages?

@@ -103,7 +103,18 @@ def DeletePath(Path):
         os.remove(Path)
 
 
-def Import(Data, Path=None, IsLIVE=False):
+def write_sourcemap(script_map: Dict[str, str], output: str = "sourcemap.json") -> None:
+    output_path = os.path.join(ScriptPath, output)
+    sourcemap = {"scripts": script_map}
+    try:
+        with open(output_path, "w") as f:
+            json.dump(sourcemap, f, indent=2)
+        logging.info(f"Sourcemap written to {os.path.abspath(output_path)}")
+    except Exception as e:
+        LogException(e, f"write sourcemap to {output_path}!")
+
+
+def Import(Data, Path=None, IsLIVE=False, Sourcemap=None):
     if Path is None:
         Path = BasePath
 
@@ -113,7 +124,11 @@ def Import(Data, Path=None, IsLIVE=False):
     SourceFileName = f"{SN}.{Settings.get('SourceFileExtension').lower()}"
     UseYAML = "y" in Settings.get("PropertiesFileExtension").lower()
 
-    if not IsLIVE and Settings.get("CleanUpBeforeImportInVSC"):
+    IsRoot = Sourcemap is None
+    if IsRoot:
+        Sourcemap = {}
+
+    if IsRoot and not IsLIVE and Settings.get("CleanUpBeforeImportInVSC"):
         if os.path.isdir(BasePath):
             for ImportedServiceFolder in os.listdir(BasePath):
                 DeletePath(os.path.join(BasePath, ImportedServiceFolder))
@@ -127,6 +142,13 @@ def Import(Data, Path=None, IsLIVE=False):
                     os.path.join(Path, SourceFileName), "w", encoding="utf-8"
                 ) as File:
                     File.write(Value)
+
+                if Sourcemap is not None:
+                    RelPath = os.path.relpath(Path, BasePath)
+                    RobloxPath = RelPath.replace(os.sep, "/")
+                    LocalPath = os.path.join(Path, SourceFileName)
+                    LocalRelPath = os.path.relpath(LocalPath, ScriptPath)
+                    Sourcemap[RobloxPath] = LocalRelPath.replace(os.sep, "/")
             except Exception as e:
                 LogException(e, f"write Source File for {Path}!")
 
@@ -150,7 +172,10 @@ def Import(Data, Path=None, IsLIVE=False):
 
         else:
             os.makedirs(NewPath, exist_ok=True)
-            Import(Value, NewPath)
+            Import(Value, NewPath, IsLIVE=IsLIVE, Sourcemap=Sourcemap)
+
+    if IsRoot:
+        write_sourcemap(Sourcemap)
 
 
 def GetInstanceDetails(InstanceFullPath, Hierarchy):

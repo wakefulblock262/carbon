@@ -1,20 +1,21 @@
-import traceback
-import threading
 import argparse
-import requests
-import shutil
 import gzip
-import json
-import yaml
-import sys
 import io
+import json
 import os
-from typing import Any, Optional, Union, Tuple, Dict, List, Type
-from argparse import ArgumentParser, _SubParsersAction, Namespace
+import shutil
+import sys
+import threading
+import traceback
+from argparse import ArgumentParser, Namespace, _SubParsersAction
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
-ScriptPath: str = os.getcwd()
+import requests
+import yaml
+
+ScriptPath: str = os.path.dirname(os.path.abspath(__file__))
 BasePath: str = os.path.join(ScriptPath, "game")
 ServerTypesForSubparsers: Dict[str, str] = {
     "TwoWaySynchronize": "POST GET",
@@ -227,10 +228,31 @@ def LoadSettings() -> Dict[str, Union[int, str, set[str]]]:
         LogException(e, "access the configuration file's data!")
 
 
-def Import(Data: Dict[str, Any], Path: str = BasePath, IsLIVE: bool = False) -> None:
+def write_sourcemap(script_map: Dict[str, str], output: str = "sourcemap.json") -> None:
+    output_path = os.path.join(ScriptPath, output)
+    sourcemap = {"scripts": script_map}
+    try:
+        with open(output_path, "w") as f:
+            json.dump(sourcemap, f, indent=2)
+        print(f"Sourcemap written to {os.path.abspath(output_path)}")
+    except Exception as e:
+        LogException(e, f"write sourcemap to {output_path}!")
+
+
+def Import(
+    Data: Dict[str, Any],
+    Path: str = BasePath,
+    IsLIVE: bool = False,
+    Sourcemap: Optional[Dict[str, str]] = None,
+) -> None:
     PN = Settings.get("PropertiesName")
     SN = Settings.get("SourceName")
-    if not IsLIVE and Settings.get("CleanUpBeforeImportInVSC"):
+
+    IsRoot = Sourcemap is None
+    if IsRoot:
+        Sourcemap = {}
+
+    if IsRoot and not IsLIVE and Settings.get("CleanUpBeforeImportInVSC"):
         if os.path.isdir(BasePath):
             for ImportedServiceFolder in os.listdir(BasePath):
                 DeletePath(os.path.join(BasePath, ImportedServiceFolder))
@@ -243,6 +265,13 @@ def Import(Data: Dict[str, Any], Path: str = BasePath, IsLIVE: bool = False) -> 
                     os.path.join(Path, SourceFileName), "w", encoding="utf-8"
                 ) as File:
                     File.write(Value)
+
+                if Sourcemap is not None:
+                    RelPath = os.path.relpath(Path, BasePath)
+                    RobloxPath = RelPath.replace(os.sep, "/")
+                    LocalPath = os.path.join(Path, SourceFileName)
+                    LocalRelPath = os.path.relpath(LocalPath, ScriptPath)
+                    Sourcemap[RobloxPath] = LocalRelPath.replace(os.sep, "/")
             except Exception as e:
                 LogException(e, f"write Source File for {Path}!")
         elif Key == PN:
@@ -264,7 +293,10 @@ def Import(Data: Dict[str, Any], Path: str = BasePath, IsLIVE: bool = False) -> 
                 LogException(e, f"write Properties File for {Path}!")
         else:
             os.makedirs(NewPath, exist_ok=True)
-            Import(Value, NewPath)
+            Import(Value, NewPath, IsLIVE=IsLIVE, Sourcemap=Sourcemap)
+
+    if IsRoot:
+        write_sourcemap(Sourcemap)
 
 
 def GetInstanceDetails(
