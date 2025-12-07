@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+# Configure logging to file only, to avoid interfering with LSP stdout/stderr
 logging.basicConfig(
     filename="carbon_lsp.log",
     level=logging.DEBUG,
@@ -264,6 +265,13 @@ def Export(ScriptToSynchronize=None):
 
 def GetHandler(POSTEnabled=True, GETEnabled=True):
     class RequestHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            # Redirect standard HTTP logging to our file logger
+            logging.info(
+                "%s - - [%s] %s"
+                % (self.client_address[0], self.log_date_time_string(), format % args)
+            )
+
         def do_POST(self):
             try:
                 if not POSTEnabled:
@@ -382,10 +390,10 @@ def GetHandler(POSTEnabled=True, GETEnabled=True):
 
 
 def write_json_rpc(response):
-    body = json.dumps(response)
-    message = f"Content-Length: {len(body)}\r\n\r\n{body}"
-    sys.stdout.write(message)
-    sys.stdout.flush()
+    body = json.dumps(response).encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+    sys.stdout.buffer.write(header + body)
+    sys.stdout.buffer.flush()
 
 
 def run_server():
@@ -411,20 +419,40 @@ def main():
 
     logging.info("LSP Adapter started")
 
+    stdin = sys.stdin.buffer
+
     while True:
         try:
-            line = sys.stdin.readline()
-            if not line:
-                break
-
+            # Read headers
             content_length = 0
-            if line.startswith("Content-Length:"):
-                content_length = int(line.split(":")[1].strip())
-                sys.stdin.readline()  # Empty line
+            while True:
+                line = stdin.readline()
+                if not line:
+                    # EOF
+                    return
+
+                line = line.strip()
+                if not line:
+                    # End of headers
+                    break
+
+                if line.lower().startswith(b"content-length:"):
+                    try:
+                        content_length = int(line.split(b":")[1].strip())
+                    except ValueError:
+                        logging.error(f"Invalid Content-Length: {line}")
 
             if content_length > 0:
-                body = sys.stdin.read(content_length)
-                request = json.loads(body)
+                body = stdin.read(content_length)
+                if len(body) < content_length:
+                    logging.error("Unexpected EOF reading body")
+                    return
+
+                try:
+                    request = json.loads(body.decode("utf-8"))
+                except json.JSONDecodeError as e:
+                    logging.error(f"JSON decode error: {e}")
+                    continue
 
                 method = request.get("method")
                 req_id = request.get("id")
@@ -448,7 +476,8 @@ def main():
                 elif method and method.startswith("textDocument/"):
                     pass
         except Exception as e:
-            logging.error(f"LSP Error: {e}")
+            logging.error(f"LSP Loop Error: {e}")
+            logging.error(traceback.format_exc())
             break
 
 
