@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use reqwest::Client;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -33,6 +34,8 @@ enum Commands {
     Sourcemap,
     /// Start LSP server
     Lsp,
+    /// Install the Roblox Studio plugin from the latest GitHub release
+    InstallPlugin,
 }
 
 #[tokio::main]
@@ -75,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
             println!("Carbon LSP started (placeholder)");
             std::future::pending::<()>().await;
         }
+        Some(Commands::InstallPlugin) => {
+            info!("Installing Roblox Studio plugin...");
+            install_plugin().await?;
+        }
         None => {
             // Default to serve if no command provided
             info!("Starting server on default port {}", port);
@@ -107,20 +114,16 @@ async fn server(port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-// --- Handlers ---
-
 async fn root() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "message": "Carbon Core Running" }))
+    Json(serde_json::json!({ "message": "Carbon Running" }))
 }
 
-/// Endpoint for the Roblox plugin to poll for pending commands (Import/Export)
 async fn poll_command(State(state): State<AppState>) -> Json<serde_json::Value> {
     let cmd = state.pop_command();
     // Returns { "command": "import" } or { "command": null }
     Json(serde_json::json!({ "command": cmd }))
 }
 
-/// Endpoint for CLI/Zed to trigger commands
 async fn receive_command(
     State(state): State<AppState>,
     Json(payload): Json<SyncCommand>,
@@ -130,7 +133,6 @@ async fn receive_command(
     Json(serde_json::json!({ "success": true }))
 }
 
-/// Receives file updates from Roblox and writes them to disk
 async fn sync_update(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
     info!("Received sync update from Roblox");
 
@@ -140,7 +142,6 @@ async fn sync_update(Json(payload): Json<serde_json::Value>) -> Json<serde_json:
                 file.get("path").and_then(|p| p.as_str()),
                 file.get("content").and_then(|c| c.as_str()),
             ) {
-                // Basic safety check
                 if path_str.contains("..") {
                     error!("Skipping unsafe path: {}", path_str);
                     continue;
@@ -163,7 +164,6 @@ async fn sync_update(Json(payload): Json<serde_json::Value>) -> Json<serde_json:
             }
         }
 
-        // Auto-generate sourcemap
         if let Ok(cwd) = std::env::current_dir() {
             match sourcemap::generate_sourcemap(cwd) {
                 Ok(json) => {
@@ -181,9 +181,6 @@ async fn sync_update(Json(payload): Json<serde_json::Value>) -> Json<serde_json:
     Json(serde_json::json!({ "success": true }))
 }
 
-// --- Client Helper ---
-
-/// Sends a command to the running server via HTTP
 async fn send_command_to_server(cmd: SyncCommand, port: u16) -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -226,5 +223,45 @@ async fn send_command_to_server(cmd: SyncCommand, port: u16) -> anyhow::Result<(
         }
     }
 
+    Ok(())
+}
+
+async fn install_plugin() -> anyhow::Result<()> {
+    let client = Client::new();
+    let url = "https://api.github.com/repos/Proton-Interactive/carbon-plugin/releases/latest";
+
+    info!("Fetching latest release from GitHub...");
+    let response = client.get(url).send().await?;
+    if !response.status().is_success() {
+        error!("Failed to fetch release: {}", response.status());
+        return Err(anyhow::anyhow!("Failed to fetch release"));
+    }
+
+    let release: serde_json::Value = response.json().await?;
+    let assets = release.get("assets").and_then(|a| a.as_array()).ok_or_else(|| anyhow::anyhow!("No assets found"))?;
+
+    let plugin_asset = assets.iter().find(|asset| {
+        asset.get("name").and_then(|n| n.as_str()).map_or(false, |name| name.ends_with(".rbxmx"))
+    }).ok_or_else(|| anyhow::anyhow!("No .rbxmx asset found"))?;
+
+    let download_url = plugin_asset.get("browser_download_url").and_then(|u| u.as_str()).ok_or_else(|| anyhow::anyhow!("No download URL"))?;
+
+    info!("Downloading plugin from {}", download_url);
+    let plugin_response = client.get(download_url).send().await?;
+    if !plugin_response.status().is_success() {
+        error!("Failed to download plugin: {}", plugin_response.status());
+        return Err(anyhow::anyhow!("Failed to download plugin"));
+    }
+
+    let plugin_data = plugin_response.bytes().await?;
+
+    let local_app_data = std::env::var("LOCALAPPDATA")?;
+    let plugins_dir = std::path::Path::new(&local_app_data).join("Roblox Studio").join("Plugins");
+    std::fs::create_dir_all(&plugins_dir)?;
+
+    let plugin_path = plugins_dir.join("Carbon.rbxmx");
+    std::fs::write(&plugin_path, plugin_data)?;
+
+    info!("Plugin installed to {:?}", plugin_path);
     Ok(())
 }
