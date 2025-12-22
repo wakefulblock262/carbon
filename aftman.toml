@@ -1,0 +1,2 @@
+[tools]
+carbon = { source = "Proton-Interactive/carbon-cli", version = "latest" }
