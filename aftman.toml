@@ -1,2 +1,2 @@
 [tools]
-carbon = { source = "Proton-Interactive/carbon-cli", version = "latest" }
+carbon = "Proton-Interactive/carbon@2.0.2"
