@@ -1,16 +1,15 @@
-mod state;
 mod sourcemap;
+mod state;
 
-use clap::{Parser, Subcommand};
-use state::{AppState, SyncCommand};
-use tracing::{error, info, Level};
-use tracing_subscriber::FmtSubscriber;
 use axum::{
     extract::State,
     routing::{get, post},
     Json, Router,
 };
-
+use clap::{Parser, Subcommand};
+use state::{AppState, SyncCommand};
+use tracing::{error, info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -21,7 +20,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-
     Serve {
         #[arg(short, long, default_value_t = 8000)]
         port: u16,
@@ -44,11 +42,9 @@ async fn main() -> anyhow::Result<()> {
         .with_max_level(Level::INFO)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let cli = Cli::parse();
-
 
     let port = 8000;
 
@@ -74,7 +70,6 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Lsp) => {
             info!("Starting LSP...");
 
-
             println!("Carbon LSP started (placeholder)");
             std::future::pending::<()>().await;
         }
@@ -83,7 +78,6 @@ async fn main() -> anyhow::Result<()> {
             install_plugin().await?;
         }
         None => {
-
             info!("Starting server on default port {}", port);
             server(port).await?;
         }
@@ -101,7 +95,6 @@ async fn server(port: u16) -> anyhow::Result<()> {
         .route("/", get(root))
         .route("/poll", get(poll_command))
         .route("/command", post(receive_command))
-
         .route("/sync/update", post(sync_update))
         .with_state(state);
 
@@ -188,7 +181,6 @@ async fn send_command_to_server(cmd: SyncCommand, port: u16) -> anyhow::Result<(
     let body = serde_json::to_string(&cmd)?;
     let len = body.len();
 
-
     let request = format!(
         "POST /command HTTP/1.1\r\n\
          Host: 127.0.0.1:{}\r\n\
@@ -244,7 +236,9 @@ async fn install_plugin() -> anyhow::Result<()> {
         info!("Using GITHUB_TOKEN for GitHub API requests");
     }
 
-    let client = reqwest::Client::builder().default_headers(headers).build()?;
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
     let url = "https://api.github.com/repos/Proton-Interactive/carbon-plugin/releases/latest";
 
     info!("Fetching latest release from GitHub...");
@@ -257,13 +251,25 @@ async fn install_plugin() -> anyhow::Result<()> {
     }
 
     let release: serde_json::Value = response.json().await?;
-    let assets = release.get("assets").and_then(|a| a.as_array()).ok_or_else(|| anyhow::anyhow!("No assets found"))?;
+    let assets = release
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| anyhow::anyhow!("No assets found"))?;
 
-    let plugin_asset = assets.iter().find(|asset| {
-        asset.get("name").and_then(|n| n.as_str()).map_or(false, |name| name.ends_with(".rbxmx"))
-    }).ok_or_else(|| anyhow::anyhow!("No .rbxmx asset found"))?;
+    let plugin_asset = assets
+        .iter()
+        .find(|asset| {
+            asset
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map_or(false, |name| name.ends_with(".rbxmx"))
+        })
+        .ok_or_else(|| anyhow::anyhow!("No .rbxmx asset found"))?;
 
-    let download_url = plugin_asset.get("browser_download_url").and_then(|u| u.as_str()).ok_or_else(|| anyhow::anyhow!("No download URL"))?;
+    let download_url = plugin_asset
+        .get("browser_download_url")
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| anyhow::anyhow!("No download URL"))?;
 
     info!("Downloading plugin from {}", download_url);
     let plugin_response = client.get(download_url).send().await?;
@@ -276,8 +282,32 @@ async fn install_plugin() -> anyhow::Result<()> {
 
     let plugin_data = plugin_response.bytes().await?;
 
-    let local_app_data = std::env::var("LOCALAPPDATA")?;
-    let plugins_dir = std::path::Path::new(&local_app_data).join("Roblox").join("Plugins");
+    info!(
+        "Detected OS: {}, Arch: {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+
+    let plugins_dir = match std::env::consts::OS {
+        "windows" => {
+            let local_app_data = std::env::var("LOCALAPPDATA")?;
+            std::path::Path::new(&local_app_data)
+                .join("Roblox")
+                .join("Plugins")
+        }
+        "macos" => {
+            let home = std::env::var("HOME")?;
+            let base_path = if std::env::consts::ARCH == "aarch64" {
+                std::path::Path::new(&home)
+                    .join("Library")
+                    .join("Application Support")
+            } else {
+                std::path::Path::new(&home).join("Documents")
+            };
+            base_path.join("Roblox").join("Plugins")
+        }
+        _ => return Err(anyhow::anyhow!("Unsupported OS: {}", std::env::consts::OS)),
+    };
     std::fs::create_dir_all(&plugins_dir)?;
 
     let plugin_path = plugins_dir.join("carbon.rbxmx");
